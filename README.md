@@ -43,13 +43,14 @@ Health Connect aggregates data from these popular health and fitness apps:
 ## Features
 
 - 🔄 **Automated Background Sync** - Configurable sync intervals (minimum 15 minutes) using WorkManager
-- 🎯 **Selective Data Types** - Choose which health data types to sync (18 supported types)
+- 🎯 **Selective Data Types** - Choose which health data types to sync (27 supported types)
 - 🔗 **Multiple Webhooks** - Send data to multiple webhook URLs simultaneously
 - 📊 **Manual Sync** - Trigger immediate data synchronization on demand
 - 📝 **Webhook Logs** - View detailed logs of all webhook requests and responses
 - 🔐 **Permission Management** - Granular Health Connect permission handling
 - 🎨 **Modern UI** - Built with Jetpack Compose and Material 3 design
 - ⚡ **Real-time Status** - Visual indicators for permission status and sync state
+- ✍️ **Write-Back Support** - Write nutrition, hydration, weight, and steps data back to Health Connect from your server
 - 💬 **Feedback** - Easy access to provide feedback and suggestions through the app menu
 
 ## Supported Health Data Types
@@ -57,7 +58,7 @@ Health Connect aggregates data from these popular health and fitness apps:
 The app supports reading and syncing the following health data types from Health Connect:
 
 1. **Steps** - Daily step count
-2. **Sleep** - Sleep sessions with stages
+2. **Sleep** - Sleep sessions with detailed stage breakdown (awake, light, deep, REM)
 3. **Heart Rate** - Heart rate measurements
 4. **Heart Rate Variability (RMSSD)** - Heart rate variability in milliseconds
 5. **Distance** - Distance traveled
@@ -71,9 +72,29 @@ The app supports reading and syncing the following health data types from Health
 13. **Body Temperature** - Body temperature readings
 14. **Respiratory Rate** - Breathing rate measurements
 15. **Resting Heart Rate** - Resting heart rate data
-16. **Exercise Sessions** - Workout and exercise data
+16. **Exercise Sessions** - Workout and exercise data with heart rate samples
 17. **Hydration** - Water intake tracking
 18. **Nutrition** - Nutritional information (calories, protein, carbs, fat)
+19. **Speed** - Speed measurements (meters per second)
+20. **Power** - Power output in watts
+21. **Body Fat** - Body fat percentage
+22. **Bone Mass** - Bone mass in kilograms
+23. **Lean Body Mass** - Lean body mass in kilograms
+24. **Menstruation** - Menstruation period tracking
+25. **VO2 Max** - Maximal oxygen consumption (ml/min/kg)
+26. **Floors Climbed** - Floors climbed count
+27. **Basal Metabolic Rate** - BMR in kcal/day
+
+### Write-Back Support
+
+The app can also write data back to Health Connect from your server. Supported write-back types:
+
+- **Nutrition** - Calories, protein, carbs, fat
+- **Hydration** - Water intake in liters
+- **Weight** - Body weight in kilograms
+- **Steps** - Step count
+
+Write-back works by polling your webhook server's `/pending-writes` endpoint for records to write, inserting them into Health Connect, and confirming via `/confirm-write`. Enable write-back in the app's configuration screen.
 
 ## Requirements
 
@@ -209,13 +230,15 @@ The app sends health data to your webhooks in JSON format. Each webhook request 
 ### Key Components
 
 - `MainActivity` - Main Entry Point & Navigation Host
-- `HealthConnectManager` - Handles Health Connect data reading
+- `HealthConnectManager` - Handles Health Connect data reading and writing
 - `SyncManager` - Manages data synchronization logic
 - `SyncWorker` - Background worker for periodic syncing
 - `WebhookManager` - Handles webhook HTTP requests
 - `PreferencesManager` - Manages app configuration and preferences
 - `ScheduledSyncManager` - Manages AlarmManager for custom schedules
 - `ScheduledSyncReceiver` - Receives alarm broadcasts to trigger syncs
+- `WriteBackManager` - Manages write-back operations from server to Health Connect
+- `WriteBackWorker` - Background worker for periodic write-back polling
 - `ConfigurationScreen` - Main settings UI
 - `LogsScreen` - Displays webhook request/response logs
 
@@ -224,6 +247,7 @@ The app sends health data to your webhooks in JSON format. Each webhook request 
 The app requires the following permissions:
 
 - Health Connect read permissions (for each selected data type)
+- Health Connect write permissions (for write-back types: nutrition, hydration, weight, steps)
 - `READ_HEALTH_DATA_IN_BACKGROUND` - For background data access
 - `INTERNET` - For webhook delivery
 
@@ -245,6 +269,8 @@ app/
 │   │   │   ├── PreferencesManager.kt    # DataStore Preferences
 │   │   │   ├── ScheduledSyncManager.kt  # Alarm Manager Logic
 │   │   │   ├── ScheduledSyncReceiver.kt # Broadcast Receiver
+│   │   │   ├── WriteBackManager.kt     # Write-Back Logic
+│   │   │   ├── WriteBackWorker.kt      # Write-Back Background Task
 │   │   │   ├── components/              # UI Components
 │   │   │   ├── screens/                 # Composable Screens
 │   │   │   └── ui/                      # Theme & Color

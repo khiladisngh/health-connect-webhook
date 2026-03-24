@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import com.hcwebhook.app.screens.AboutScreen
 import com.hcwebhook.app.screens.ConfigurationScreen
 import com.hcwebhook.app.screens.LogsScreen
+import com.hcwebhook.app.screens.PermissionsScreen
 import com.hcwebhook.app.ui.theme.HCWebhookTheme
 import kotlinx.coroutines.launch
 
@@ -92,6 +93,7 @@ class MainActivity : ComponentActivity() {
                         permissionLauncher = permissionLauncher
                     )
                     is NavigationScreen.Webhooks -> com.hcwebhook.app.screens.WebhooksScreen(activity = activity)
+                    is NavigationScreen.Permissions -> PermissionsScreen()
                     is NavigationScreen.Logs -> LogsScreen()
                     is NavigationScreen.About -> AboutScreen(activity = activity)
                 }

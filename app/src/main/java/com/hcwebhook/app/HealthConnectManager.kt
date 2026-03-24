@@ -42,7 +42,8 @@ enum class HealthDataType(val displayName: String, val recordClass: KClass<out R
     LEAN_BODY_MASS("Lean Body Mass", LeanBodyMassRecord::class),
     MENSTRUATION("Menstruation", MenstruationPeriodRecord::class),
     VO2_MAX("VO2 Max", Vo2MaxRecord::class),
-    FLOORS_CLIMBED("Floors Climbed", FloorsClimbedRecord::class)
+    FLOORS_CLIMBED("Floors Climbed", FloorsClimbedRecord::class),
+    BASAL_METABOLIC_RATE("Basal Metabolic Rate", BasalMetabolicRateRecord::class)
 }
 
 data class HealthData(
@@ -71,7 +72,8 @@ data class HealthData(
     val leanBodyMass: List<LeanBodyMassData>,
     val menstruation: List<MenstruationData>,
     val vo2Max: List<Vo2MaxData>,
-    val floorsClimbed: List<FloorsClimbedData>
+    val floorsClimbed: List<FloorsClimbedData>,
+    val basalMetabolicRate: List<BasalMetabolicRateData>
 )
 
 data class StepsData(
@@ -83,7 +85,11 @@ data class StepsData(
 data class SleepData(
     val sessionEndTime: Instant,
     val duration: Duration,
-    val stages: List<SleepStage>
+    val stages: List<SleepStage>,
+    val awakeDuration: Duration,
+    val lightDuration: Duration,
+    val deepDuration: Duration,
+    val remDuration: Duration
 )
 
 data class SleepStage(
@@ -164,9 +170,11 @@ data class RestingHeartRateData(
 
 data class ExerciseData(
     val type: String,
+    val typeName: String,
     val startTime: Instant,
     val endTime: Instant,
-    val duration: Duration
+    val duration: Duration,
+    val heartRateSamples: List<HeartRateData>
 )
 
 data class HydrationData(
@@ -200,12 +208,12 @@ data class BodyFatData(
 )
 
 data class BoneMassData(
-    val massKg: Double,
+    val kilograms: Double,
     val time: Instant
 )
 
 data class LeanBodyMassData(
-    val massKg: Double,
+    val kilograms: Double,
     val time: Instant
 )
 
@@ -215,7 +223,7 @@ data class MenstruationData(
 )
 
 data class Vo2MaxData(
-    val vo2Max: Double,
+    val vo2MillilitersPerMinuteKilogram: Double,
     val time: Instant
 )
 
@@ -223,6 +231,11 @@ data class FloorsClimbedData(
     val floors: Double,
     val startTime: Instant,
     val endTime: Instant
+)
+
+data class BasalMetabolicRateData(
+    val kcalPerDay: Double,
+    val time: Instant
 )
 
 class HealthConnectManager(private val context: Context) {
@@ -300,6 +313,8 @@ class HealthConnectManager(private val context: Context) {
                 readVo2MaxData(startTime, endTime, lastSyncTimestamps[HealthDataType.VO2_MAX]) else emptyList()
             val floorsClimbedData = if (HealthDataType.FLOORS_CLIMBED in enabledTypes)
                 readFloorsClimbedData(startTime, endTime, lastSyncTimestamps[HealthDataType.FLOORS_CLIMBED]) else emptyList()
+            val basalMetabolicRateData = if (HealthDataType.BASAL_METABOLIC_RATE in enabledTypes)
+                readBasalMetabolicRateData(startTime, endTime, lastSyncTimestamps[HealthDataType.BASAL_METABOLIC_RATE]) else emptyList()
 
             Result.success(HealthData(
                 steps = stepsData,
@@ -327,7 +342,8 @@ class HealthConnectManager(private val context: Context) {
                 leanBodyMass = leanBodyMassData,
                 menstruation = menstruationData,
                 vo2Max = vo2MaxData,
-                floorsClimbed = floorsClimbedData
+                floorsClimbed = floorsClimbedData,
+                basalMetabolicRate = basalMetabolicRateData
             ))
         } catch (e: Exception) {
             Result.failure(e)
@@ -339,9 +355,6 @@ class HealthConnectManager(private val context: Context) {
         endTime: Instant,
         lastSync: Instant?
     ): List<StepsData> {
-        // Aggregate steps per calendar day (using device timezone) instead of
-        // a single multi-day total. This produces clean per-day records that
-        // the server can use directly without delta-tracking hacks.
         val zone = java.time.ZoneId.systemDefault()
         val result = mutableListOf<StepsData>()
 
@@ -353,11 +366,9 @@ class HealthConnectManager(private val context: Context) {
             val dayStart = currentDate.atStartOfDay(zone).toInstant()
             val dayEnd = currentDate.plusDays(1).atStartOfDay(zone).toInstant()
 
-            // Clamp to the actual lookback window
             val queryStart = if (dayStart.isBefore(startTime)) startTime else dayStart
             val queryEnd = if (dayEnd.isAfter(endTime)) endTime else dayEnd
 
-            // Skip days entirely before lastSync
             if (lastSync != null && queryEnd.isBefore(lastSync)) {
                 currentDate = currentDate.plusDays(1)
                 continue
@@ -403,17 +414,30 @@ class HealthConnectManager(private val context: Context) {
             .map { record ->
                 val stages = record.stages?.map { stage ->
                     SleepStage(
-                        stage = stage.stage.toString(),
+                        stage = getSleepStageName(stage.stage),
                         startTime = stage.startTime,
                         endTime = stage.endTime,
                         duration = Duration.between(stage.startTime, stage.endTime)
                     )
                 } ?: emptyList()
 
+                val awakeDuration = stages.filter { it.stage == "AWAKE" }
+                    .fold(Duration.ZERO) { acc, s -> acc + s.duration }
+                val lightDuration = stages.filter { it.stage == "LIGHT" }
+                    .fold(Duration.ZERO) { acc, s -> acc + s.duration }
+                val deepDuration = stages.filter { it.stage == "DEEP" }
+                    .fold(Duration.ZERO) { acc, s -> acc + s.duration }
+                val remDuration = stages.filter { it.stage == "REM" }
+                    .fold(Duration.ZERO) { acc, s -> acc + s.duration }
+
                 SleepData(
                     sessionEndTime = record.endTime,
                     duration = Duration.between(record.startTime, record.endTime),
-                    stages = stages
+                    stages = stages,
+                    awakeDuration = awakeDuration,
+                    lightDuration = lightDuration,
+                    deepDuration = deepDuration,
+                    remDuration = remDuration
                 )
             }
     }
@@ -437,7 +461,6 @@ class HealthConnectManager(private val context: Context) {
     }
 
     private suspend fun readDistanceData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<DistanceData> {
-        // Aggregate distance per calendar day (same pattern as steps)
         val zone = java.time.ZoneId.systemDefault()
         val result = mutableListOf<DistanceData>()
 
@@ -479,7 +502,6 @@ class HealthConnectManager(private val context: Context) {
     }
 
     private suspend fun readActiveCaloriesData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<ActiveCaloriesData> {
-        // Aggregate active calories per calendar day (same pattern as steps/distance)
         val zone = java.time.ZoneId.systemDefault()
         val result = mutableListOf<ActiveCaloriesData>()
 
@@ -587,7 +609,29 @@ class HealthConnectManager(private val context: Context) {
         val request = ReadRecordsRequest(recordType = ExerciseSessionRecord::class, timeRangeFilter = TimeRangeFilter.between(startTime, endTime))
         val response = healthConnectClient.readRecords(request)
         return response.records.filter { lastSync == null || it.endTime >= lastSync }
-            .map { ExerciseData(it.exerciseType.toString(), it.startTime, it.endTime, Duration.between(it.startTime, it.endTime)) }
+            .map { record ->
+                val heartRateSamples = try {
+                    val hrRequest = ReadRecordsRequest(
+                        recordType = HeartRateRecord::class,
+                        timeRangeFilter = TimeRangeFilter.between(record.startTime, record.endTime)
+                    )
+                    val hrResponse = healthConnectClient.readRecords(hrRequest)
+                    hrResponse.records.flatMap { hr ->
+                        hr.samples.map { HeartRateData(it.beatsPerMinute, it.time) }
+                    }
+                } catch (_: Exception) {
+                    emptyList()
+                }
+
+                ExerciseData(
+                    type = record.exerciseType.toString(),
+                    typeName = getExerciseTypeName(record.exerciseType),
+                    startTime = record.startTime,
+                    endTime = record.endTime,
+                    duration = Duration.between(record.startTime, record.endTime),
+                    heartRateSamples = heartRateSamples
+                )
+            }
     }
 
     private suspend fun readHydrationData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<HydrationData> {
@@ -607,23 +651,21 @@ class HealthConnectManager(private val context: Context) {
     private suspend fun readSpeedData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<SpeedData> {
         val request = ReadRecordsRequest(recordType = SpeedRecord::class, timeRangeFilter = TimeRangeFilter.between(startTime, endTime))
         val response = healthConnectClient.readRecords(request)
-        return response.records
-            .flatMap { record ->
-                record.samples
-                    .filter { lastSync == null || it.time >= lastSync }
-                    .map { SpeedData(it.speed.inMetersPerSecond, it.time) }
-            }
+        return response.records.flatMap { record ->
+            record.samples
+                .filter { lastSync == null || it.time >= lastSync }
+                .map { SpeedData(it.speed.inMetersPerSecond, it.time) }
+        }
     }
 
     private suspend fun readPowerData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<PowerData> {
         val request = ReadRecordsRequest(recordType = PowerRecord::class, timeRangeFilter = TimeRangeFilter.between(startTime, endTime))
         val response = healthConnectClient.readRecords(request)
-        return response.records
-            .flatMap { record ->
-                record.samples
-                    .filter { lastSync == null || it.time >= lastSync }
-                    .map { PowerData(it.power.inWatts, it.time) }
-            }
+        return response.records.flatMap { record ->
+            record.samples
+                .filter { lastSync == null || it.time >= lastSync }
+                .map { PowerData(it.power.inWatts, it.time) }
+        }
     }
 
     private suspend fun readBodyFatData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BodyFatData> {
@@ -668,6 +710,96 @@ class HealthConnectManager(private val context: Context) {
             .map { FloorsClimbedData(it.floors, it.startTime, it.endTime) }
     }
 
+    private suspend fun readBasalMetabolicRateData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BasalMetabolicRateData> {
+        val request = ReadRecordsRequest(recordType = BasalMetabolicRateRecord::class, timeRangeFilter = TimeRangeFilter.between(startTime, endTime))
+        val response = healthConnectClient.readRecords(request)
+        return response.records.filter { lastSync == null || it.time >= lastSync }
+            .map { BasalMetabolicRateData(it.basalMetabolicRate.inKilocaloriesPerDay, it.time) }
+    }
+
+    suspend fun insertNutrition(
+        calories: Double?,
+        protein: Double?,
+        carbs: Double?,
+        fat: Double?,
+        startTime: Instant,
+        endTime: Instant
+    ): Result<Unit> {
+        return try {
+            val record = NutritionRecord(
+                startTime = startTime,
+                startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(startTime),
+                endTime = endTime,
+                endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(endTime),
+                energy = calories?.let { Energy.kilocalories(it) },
+                protein = protein?.let { Mass.grams(it) },
+                totalCarbohydrate = carbs?.let { Mass.grams(it) },
+                totalFat = fat?.let { Mass.grams(it) }
+            )
+            healthConnectClient.insertRecords(listOf(record))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun insertHydration(
+        liters: Double,
+        startTime: Instant,
+        endTime: Instant
+    ): Result<Unit> {
+        return try {
+            val record = HydrationRecord(
+                startTime = startTime,
+                startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(startTime),
+                endTime = endTime,
+                endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(endTime),
+                volume = Volume.liters(liters)
+            )
+            healthConnectClient.insertRecords(listOf(record))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun insertWeight(
+        kilograms: Double,
+        time: Instant
+    ): Result<Unit> {
+        return try {
+            val record = WeightRecord(
+                time = time,
+                zoneOffset = ZoneOffset.systemDefault().rules.getOffset(time),
+                weight = Mass.kilograms(kilograms)
+            )
+            healthConnectClient.insertRecords(listOf(record))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun insertSteps(
+        count: Long,
+        startTime: Instant,
+        endTime: Instant
+    ): Result<Unit> {
+        return try {
+            val record = StepsRecord(
+                startTime = startTime,
+                startZoneOffset = ZoneOffset.systemDefault().rules.getOffset(startTime),
+                endTime = endTime,
+                endZoneOffset = ZoneOffset.systemDefault().rules.getOffset(endTime),
+                count = count
+            )
+            healthConnectClient.insertRecords(listOf(record))
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     fun isHealthConnectAvailable(): Boolean {
         return try {
             HealthConnectClient.getOrCreate(context)
@@ -696,96 +828,8 @@ class HealthConnectManager(private val context: Context) {
         return contract.createIntent(context, permissions.toTypedArray())
     }
 
-    suspend fun hasWritePermissions(): Boolean {
-        if (!isHealthConnectAvailable()) return false
-        val granted = healthConnectClient.permissionController.getGrantedPermissions()
-        return WRITE_PERMISSIONS.all { it in granted }
-    }
-
-    suspend fun insertNutrition(
-        calories: Double?,
-        protein: Double?,
-        carbs: Double?,
-        fat: Double?,
-        startTime: Instant,
-        endTime: Instant
-    ): Result<Unit> = try {
-        val record = NutritionRecord(
-            energy = calories?.let { Energy.kilocalories(it) },
-            protein = protein?.let { Mass.grams(it) },
-            totalCarbohydrate = carbs?.let { Mass.grams(it) },
-            totalFat = fat?.let { Mass.grams(it) },
-            startTime = startTime,
-            startZoneOffset = ZoneOffset.UTC,
-            endTime = endTime,
-            endZoneOffset = ZoneOffset.UTC
-        )
-        healthConnectClient.insertRecords(listOf(record))
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
-    suspend fun insertHydration(
-        liters: Double,
-        startTime: Instant,
-        endTime: Instant
-    ): Result<Unit> = try {
-        val record = HydrationRecord(
-            volume = Volume.liters(liters),
-            startTime = startTime,
-            startZoneOffset = ZoneOffset.UTC,
-            endTime = endTime,
-            endZoneOffset = ZoneOffset.UTC
-        )
-        healthConnectClient.insertRecords(listOf(record))
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
-    suspend fun insertWeight(
-        kilograms: Double,
-        time: Instant
-    ): Result<Unit> = try {
-        val record = WeightRecord(
-            weight = Mass.kilograms(kilograms),
-            time = time,
-            zoneOffset = ZoneOffset.UTC
-        )
-        healthConnectClient.insertRecords(listOf(record))
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
-    suspend fun insertSteps(
-        count: Long,
-        startTime: Instant,
-        endTime: Instant
-    ): Result<Unit> = try {
-        val record = StepsRecord(
-            count = count,
-            startTime = startTime,
-            startZoneOffset = ZoneOffset.UTC,
-            endTime = endTime,
-            endZoneOffset = ZoneOffset.UTC
-        )
-        healthConnectClient.insertRecords(listOf(record))
-        Result.success(Unit)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
     companion object {
         private const val LOOKBACK_HOURS = 48L
-
-        val WRITE_PERMISSIONS = setOf(
-            HealthPermission.getWritePermission(NutritionRecord::class),
-            HealthPermission.getWritePermission(HydrationRecord::class),
-            HealthPermission.getWritePermission(WeightRecord::class),
-            HealthPermission.getWritePermission(StepsRecord::class)
-        )
 
         fun getPermissionsForTypes(types: Set<HealthDataType>): Set<String> {
             val permissions = types.map { HealthPermission.getReadPermission(it.recordClass) }.toMutableSet()
@@ -820,7 +864,90 @@ class HealthConnectManager(private val context: Context) {
             HealthPermission.getReadPermission(MenstruationPeriodRecord::class),
             HealthPermission.getReadPermission(Vo2MaxRecord::class),
             HealthPermission.getReadPermission(FloorsClimbedRecord::class),
+            HealthPermission.getReadPermission(BasalMetabolicRateRecord::class),
             "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
         )
+
+        val WRITE_PERMISSIONS = setOf(
+            HealthPermission.getWritePermission(NutritionRecord::class),
+            HealthPermission.getWritePermission(HydrationRecord::class),
+            HealthPermission.getWritePermission(WeightRecord::class),
+            HealthPermission.getWritePermission(StepsRecord::class)
+        )
+
+        private fun getSleepStageName(stage: Int): String = when (stage) {
+            SleepSessionRecord.STAGE_TYPE_AWAKE -> "AWAKE"
+            SleepSessionRecord.STAGE_TYPE_SLEEPING -> "SLEEPING"
+            SleepSessionRecord.STAGE_TYPE_OUT_OF_BED -> "OUT_OF_BED"
+            SleepSessionRecord.STAGE_TYPE_LIGHT -> "LIGHT"
+            SleepSessionRecord.STAGE_TYPE_DEEP -> "DEEP"
+            SleepSessionRecord.STAGE_TYPE_REM -> "REM"
+            else -> "UNKNOWN"
+        }
+
+        private fun getExerciseTypeName(type: Int): String = when (type) {
+            ExerciseSessionRecord.EXERCISE_TYPE_BADMINTON -> "Badminton"
+            ExerciseSessionRecord.EXERCISE_TYPE_BASEBALL -> "Baseball"
+            ExerciseSessionRecord.EXERCISE_TYPE_BASKETBALL -> "Basketball"
+            ExerciseSessionRecord.EXERCISE_TYPE_BIKING -> "Biking"
+            ExerciseSessionRecord.EXERCISE_TYPE_BIKING_STATIONARY -> "Stationary Biking"
+            ExerciseSessionRecord.EXERCISE_TYPE_BOOT_CAMP -> "Boot Camp"
+            ExerciseSessionRecord.EXERCISE_TYPE_BOXING -> "Boxing"
+            ExerciseSessionRecord.EXERCISE_TYPE_CALISTHENICS -> "Calisthenics"
+            ExerciseSessionRecord.EXERCISE_TYPE_CRICKET -> "Cricket"
+            ExerciseSessionRecord.EXERCISE_TYPE_DANCING -> "Dancing"
+            ExerciseSessionRecord.EXERCISE_TYPE_ELLIPTICAL -> "Elliptical"
+            ExerciseSessionRecord.EXERCISE_TYPE_EXERCISE_CLASS -> "Exercise Class"
+            ExerciseSessionRecord.EXERCISE_TYPE_FENCING -> "Fencing"
+            ExerciseSessionRecord.EXERCISE_TYPE_FOOTBALL_AMERICAN -> "American Football"
+            ExerciseSessionRecord.EXERCISE_TYPE_FOOTBALL_AUSTRALIAN -> "Australian Football"
+            ExerciseSessionRecord.EXERCISE_TYPE_FRISBEE_DISC -> "Frisbee"
+            ExerciseSessionRecord.EXERCISE_TYPE_GOLF -> "Golf"
+            ExerciseSessionRecord.EXERCISE_TYPE_GUIDED_BREATHING -> "Guided Breathing"
+            ExerciseSessionRecord.EXERCISE_TYPE_GYMNASTICS -> "Gymnastics"
+            ExerciseSessionRecord.EXERCISE_TYPE_HANDBALL -> "Handball"
+            ExerciseSessionRecord.EXERCISE_TYPE_HIGH_INTENSITY_INTERVAL_TRAINING -> "HIIT"
+            ExerciseSessionRecord.EXERCISE_TYPE_HIKING -> "Hiking"
+            ExerciseSessionRecord.EXERCISE_TYPE_ICE_HOCKEY -> "Ice Hockey"
+            ExerciseSessionRecord.EXERCISE_TYPE_ICE_SKATING -> "Ice Skating"
+            ExerciseSessionRecord.EXERCISE_TYPE_MARTIAL_ARTS -> "Martial Arts"
+            ExerciseSessionRecord.EXERCISE_TYPE_PADDLING -> "Paddling"
+            ExerciseSessionRecord.EXERCISE_TYPE_PARAGLIDING -> "Paragliding"
+            ExerciseSessionRecord.EXERCISE_TYPE_PILATES -> "Pilates"
+            ExerciseSessionRecord.EXERCISE_TYPE_RACQUETBALL -> "Racquetball"
+            ExerciseSessionRecord.EXERCISE_TYPE_ROCK_CLIMBING -> "Rock Climbing"
+            ExerciseSessionRecord.EXERCISE_TYPE_ROLLER_HOCKEY -> "Roller Hockey"
+            ExerciseSessionRecord.EXERCISE_TYPE_ROWING -> "Rowing"
+            ExerciseSessionRecord.EXERCISE_TYPE_ROWING_MACHINE -> "Rowing Machine"
+            ExerciseSessionRecord.EXERCISE_TYPE_RUGBY -> "Rugby"
+            ExerciseSessionRecord.EXERCISE_TYPE_RUNNING -> "Running"
+            ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL -> "Treadmill Running"
+            ExerciseSessionRecord.EXERCISE_TYPE_SAILING -> "Sailing"
+            ExerciseSessionRecord.EXERCISE_TYPE_SCUBA_DIVING -> "Scuba Diving"
+            ExerciseSessionRecord.EXERCISE_TYPE_SKATING -> "Skating"
+            ExerciseSessionRecord.EXERCISE_TYPE_SKIING -> "Skiing"
+            ExerciseSessionRecord.EXERCISE_TYPE_SNOWBOARDING -> "Snowboarding"
+            ExerciseSessionRecord.EXERCISE_TYPE_SNOWSHOEING -> "Snowshoeing"
+            ExerciseSessionRecord.EXERCISE_TYPE_SOCCER -> "Soccer"
+            ExerciseSessionRecord.EXERCISE_TYPE_SOFTBALL -> "Softball"
+            ExerciseSessionRecord.EXERCISE_TYPE_SQUASH -> "Squash"
+            ExerciseSessionRecord.EXERCISE_TYPE_STAIR_CLIMBING -> "Stair Climbing"
+            ExerciseSessionRecord.EXERCISE_TYPE_STAIR_CLIMBING_MACHINE -> "Stair Machine"
+            ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING -> "Strength Training"
+            ExerciseSessionRecord.EXERCISE_TYPE_STRETCHING -> "Stretching"
+            ExerciseSessionRecord.EXERCISE_TYPE_SURFING -> "Surfing"
+            ExerciseSessionRecord.EXERCISE_TYPE_SWIMMING_OPEN_WATER -> "Open Water Swimming"
+            ExerciseSessionRecord.EXERCISE_TYPE_SWIMMING_POOL -> "Pool Swimming"
+            ExerciseSessionRecord.EXERCISE_TYPE_TABLE_TENNIS -> "Table Tennis"
+            ExerciseSessionRecord.EXERCISE_TYPE_TENNIS -> "Tennis"
+            ExerciseSessionRecord.EXERCISE_TYPE_VOLLEYBALL -> "Volleyball"
+            ExerciseSessionRecord.EXERCISE_TYPE_WALKING -> "Walking"
+            ExerciseSessionRecord.EXERCISE_TYPE_WATER_POLO -> "Water Polo"
+            ExerciseSessionRecord.EXERCISE_TYPE_WEIGHTLIFTING -> "Weightlifting"
+            ExerciseSessionRecord.EXERCISE_TYPE_WHEELCHAIR -> "Wheelchair"
+            ExerciseSessionRecord.EXERCISE_TYPE_YOGA -> "Yoga"
+            ExerciseSessionRecord.EXERCISE_TYPE_OTHER_WORKOUT -> "Other Workout"
+            else -> "Unknown ($type)"
+        }
     }
 }

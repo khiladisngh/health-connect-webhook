@@ -3,9 +3,6 @@ package com.hcwebhook.app
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -29,7 +26,6 @@ class SyncManager(private val context: Context) {
                 return@withContext Result.failure(Exception("No data types enabled"))
             }
 
-            // Get last sync timestamps for all enabled types, ignore if a manual time range is specified
             val lastSyncTimestamps = if (timeRangeDays == null) {
                 enabledTypes.associateWith { type ->
                     preferencesManager.getLastSyncTimestamp(type)?.let { Instant.ofEpochMilli(it) }
@@ -38,7 +34,6 @@ class SyncManager(private val context: Context) {
                 emptyMap()
             }
 
-            // Read health data
             val healthDataResult = healthConnectManager.readHealthData(enabledTypes, lastSyncTimestamps, timeRangeDays)
             if (healthDataResult.isFailure) {
                 return@withContext Result.failure(healthDataResult.exceptionOrNull() ?: Exception("Failed to read health data"))
@@ -46,14 +41,12 @@ class SyncManager(private val context: Context) {
 
             val healthData = healthDataResult.getOrThrow()
 
-            // Check if there's any new data
             if (isHealthDataEmpty(healthData)) {
                 preferencesManager.setLastSyncTime(Instant.now().toEpochMilli())
                 preferencesManager.setLastSyncSummary("No new data")
                 return@withContext Result.success(SyncResult.NoData)
             }
 
-            // Calculate total record count
             val totalRecords = healthData.steps.size + healthData.sleep.size + healthData.heartRate.size +
                     healthData.heartRateVariability.size +
                     healthData.distance.size + healthData.activeCalories.size + healthData.totalCalories.size +
@@ -63,7 +56,7 @@ class SyncManager(private val context: Context) {
                     healthData.hydration.size + healthData.nutrition.size +
                     healthData.speed.size + healthData.power.size + healthData.bodyFat.size +
                     healthData.boneMass.size + healthData.leanBodyMass.size + healthData.menstruation.size +
-                    healthData.vo2Max.size + healthData.floorsClimbed.size
+                    healthData.vo2Max.size + healthData.floorsClimbed.size + healthData.basalMetabolicRate.size
 
             val webhookManager = WebhookManager(
                 webhookConfigs = webhookConfigs,
@@ -72,20 +65,16 @@ class SyncManager(private val context: Context) {
                 recordCount = totalRecords
             )
 
-            // Build JSON payload
             val jsonPayload = buildJsonPayload(healthData)
 
-            // Post to webhook
             val postResult = webhookManager.postData(jsonPayload)
             if (postResult.isFailure) {
                 return@withContext Result.failure(postResult.exceptionOrNull() ?: Exception("Failed to post to webhooks"))
             }
 
-            // Update last sync timestamps
             val syncCounts = mutableMapOf<HealthDataType, Int>()
             updateSyncTimestamps(healthData, syncCounts)
 
-            // Save last sync status for UI display
             val summary = buildSyncSummary(healthData)
             preferencesManager.setLastSyncTime(Instant.now().toEpochMilli())
             preferencesManager.setLastSyncSummary(summary)
@@ -106,7 +95,7 @@ class SyncManager(private val context: Context) {
                 data.hydration.isEmpty() && data.nutrition.isEmpty() &&
                 data.speed.isEmpty() && data.power.isEmpty() && data.bodyFat.isEmpty() &&
                 data.boneMass.isEmpty() && data.leanBodyMass.isEmpty() && data.menstruation.isEmpty() &&
-                data.vo2Max.isEmpty() && data.floorsClimbed.isEmpty()
+                data.vo2Max.isEmpty() && data.floorsClimbed.isEmpty() && data.basalMetabolicRate.isEmpty()
     }
 
     private fun updateSyncTimestamps(data: HealthData, syncCounts: MutableMap<HealthDataType, Int>) {
@@ -214,6 +203,10 @@ class SyncManager(private val context: Context) {
             preferencesManager.setLastSyncTimestamp(HealthDataType.FLOORS_CLIMBED, data.floorsClimbed.maxOf { it.endTime }.toEpochMilli())
             syncCounts[HealthDataType.FLOORS_CLIMBED] = data.floorsClimbed.size
         }
+        if (data.basalMetabolicRate.isNotEmpty()) {
+            preferencesManager.setLastSyncTimestamp(HealthDataType.BASAL_METABOLIC_RATE, data.basalMetabolicRate.maxOf { it.time }.toEpochMilli())
+            syncCounts[HealthDataType.BASAL_METABOLIC_RATE] = data.basalMetabolicRate.size
+        }
     }
 
     private fun buildSyncSummary(data: HealthData): String {
@@ -246,17 +239,14 @@ class SyncManager(private val context: Context) {
         if (data.heartRateVariability.isNotEmpty()) {
             parts.add("${data.heartRateVariability.size} HRV")
         }
-        if (data.speed.isNotEmpty()) {
-            parts.add("${data.speed.size} speed")
-        }
-        if (data.power.isNotEmpty()) {
-            parts.add("${data.power.size} power")
-        }
         if (data.bodyFat.isNotEmpty()) {
             parts.add("${data.bodyFat.size} body fat")
         }
         if (data.vo2Max.isNotEmpty()) {
-            parts.add("${data.vo2Max.size} VO2max")
+            parts.add("${data.vo2Max.size} VO2")
+        }
+        if (data.basalMetabolicRate.isNotEmpty()) {
+            parts.add("${data.basalMetabolicRate.size} BMR")
         }
         if (data.floorsClimbed.isNotEmpty()) {
             parts.add("${data.floorsClimbed.size} floors")
@@ -288,6 +278,10 @@ class SyncManager(private val context: Context) {
                         add(buildJsonObject {
                             put("session_end_time", sleep.sessionEndTime.toString())
                             put("duration_seconds", sleep.duration.seconds)
+                            put("awake_duration_seconds", sleep.awakeDuration.seconds)
+                            put("light_duration_seconds", sleep.lightDuration.seconds)
+                            put("deep_duration_seconds", sleep.deepDuration.seconds)
+                            put("rem_duration_seconds", sleep.remDuration.seconds)
                             putJsonArray("stages") {
                                 sleep.stages.forEach { stage ->
                                     add(buildJsonObject {
@@ -428,9 +422,20 @@ class SyncManager(private val context: Context) {
                 putJsonArray("exercise") {
                     healthData.exercise.forEach { add(buildJsonObject {
                         put("type", it.type)
+                        put("type_name", it.typeName)
                         put("start_time", it.startTime.toString())
                         put("end_time", it.endTime.toString())
                         put("duration_seconds", it.duration.seconds)
+                        if (it.heartRateSamples.isNotEmpty()) {
+                            putJsonArray("heart_rate_samples") {
+                                it.heartRateSamples.forEach { hr ->
+                                    add(buildJsonObject {
+                                        put("bpm", hr.bpm)
+                                        put("time", hr.time.toString())
+                                    })
+                                }
+                            }
+                        }
                     }) }
                 }
             }
@@ -488,7 +493,7 @@ class SyncManager(private val context: Context) {
             if (healthData.boneMass.isNotEmpty()) {
                 putJsonArray("bone_mass") {
                     healthData.boneMass.forEach { add(buildJsonObject {
-                        put("mass_kg", it.massKg)
+                        put("kilograms", it.kilograms)
                         put("time", it.time.toString())
                     }) }
                 }
@@ -497,7 +502,7 @@ class SyncManager(private val context: Context) {
             if (healthData.leanBodyMass.isNotEmpty()) {
                 putJsonArray("lean_body_mass") {
                     healthData.leanBodyMass.forEach { add(buildJsonObject {
-                        put("mass_kg", it.massKg)
+                        put("kilograms", it.kilograms)
                         put("time", it.time.toString())
                     }) }
                 }
@@ -515,7 +520,7 @@ class SyncManager(private val context: Context) {
             if (healthData.vo2Max.isNotEmpty()) {
                 putJsonArray("vo2_max") {
                     healthData.vo2Max.forEach { add(buildJsonObject {
-                        put("vo2_max_ml_per_min_kg", it.vo2Max)
+                        put("vo2_ml_per_min_kg", it.vo2MillilitersPerMinuteKilogram)
                         put("time", it.time.toString())
                     }) }
                 }
@@ -527,6 +532,15 @@ class SyncManager(private val context: Context) {
                         put("floors", it.floors)
                         put("start_time", it.startTime.toString())
                         put("end_time", it.endTime.toString())
+                    }) }
+                }
+            }
+
+            if (healthData.basalMetabolicRate.isNotEmpty()) {
+                putJsonArray("basal_metabolic_rate") {
+                    healthData.basalMetabolicRate.forEach { add(buildJsonObject {
+                        put("kcal_per_day", it.kcalPerDay)
+                        put("time", it.time.toString())
                     }) }
                 }
             }

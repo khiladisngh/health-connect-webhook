@@ -12,7 +12,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 sealed class NavigationScreen(val route: String, val title: String, val icon: ImageVector) {
     object Home : NavigationScreen("home", "Home", Icons.Filled.Home)
     object Webhooks : NavigationScreen("webhooks", "Webhooks", Icons.Filled.Webhook)
-    object Permissions : NavigationScreen("permissions", "Permissions", Icons.Filled.Shield)
+    object Permissions : NavigationScreen("permissions", "Perms", Icons.Filled.Shield)
     object Logs : NavigationScreen("logs", "Logs", Icons.Filled.List)
     object About : NavigationScreen("about", "About", Icons.Filled.Info)
 }

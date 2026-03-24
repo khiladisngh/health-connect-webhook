@@ -1,17 +1,20 @@
 package com.hcwebhook.app.screens
 
 import android.content.Intent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -20,6 +23,19 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import com.hcwebhook.app.HealthConnectManager
 import com.hcwebhook.app.HealthDataType
+
+private val shortDisplayNames = mapOf(
+    HealthDataType.HEART_RATE_VARIABILITY to "HRV (RMSSD)",
+    HealthDataType.BASAL_METABOLIC_RATE to "BMR",
+    HealthDataType.OXYGEN_SATURATION to "SpO2",
+    HealthDataType.BODY_TEMPERATURE to "Body Temp",
+    HealthDataType.RESPIRATORY_RATE to "Resp. Rate",
+    HealthDataType.LEAN_BODY_MASS to "Lean Mass",
+    HealthDataType.ACTIVE_CALORIES to "Active Cal",
+    HealthDataType.TOTAL_CALORIES to "Total Cal",
+    HealthDataType.FLOORS_CLIMBED to "Floors",
+    HealthDataType.EXERCISE to "Exercise",
+)
 
 @Composable
 fun PermissionsScreen() {
@@ -169,56 +185,69 @@ fun PermissionsScreen() {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     "Data Type",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    Text(
-                        "Read",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        "Write",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.width(40.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            "Read",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Box(modifier = Modifier.width(40.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            "Write",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
 
-            HorizontalDivider()
+            HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline)
 
             // Permission list
+            val dataTypes = HealthDataType.entries.toList()
+            val altRowColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
-                items(HealthDataType.entries.toList()) { dataType ->
+                itemsIndexed(dataTypes) { index, dataType ->
                     val readPermission = HealthPermission.getReadPermission(dataType.recordClass)
                     val hasRead = readPermission in grantedPermissions
                     val hasWrite = if (dataType.readOnly) null else try {
                         HealthPermission.getWritePermission(dataType.recordClass) in grantedPermissions
                     } catch (_: Exception) { false }
 
+                    val rowBackground = if (index % 2 == 1) altRowColor else Color.Transparent
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(rowBackground)
                             .padding(horizontal = 16.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            dataType.displayName,
+                            shortDisplayNames[dataType] ?: dataType.displayName,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
                             maxLines = 1,
@@ -226,15 +255,19 @@ fun PermissionsScreen() {
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(24.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            PermissionIcon(granted = hasRead)
-                            PermissionIcon(granted = hasWrite)
+                            Box(modifier = Modifier.width(40.dp), contentAlignment = Alignment.Center) {
+                                PermissionIcon(granted = hasRead)
+                            }
+                            Box(modifier = Modifier.width(40.dp), contentAlignment = Alignment.Center) {
+                                PermissionIcon(granted = hasWrite)
+                            }
                         }
                     }
                     HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                     )
                 }
                 item {
@@ -254,20 +287,24 @@ fun PermissionsScreen() {
 
 @Composable
 private fun PermissionIcon(granted: Boolean?) {
-    if (granted == null) {
-        Text(
-            "—",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+    when (granted) {
+        null -> Icon(
+            imageVector = Icons.Filled.Remove,
+            contentDescription = "Not available",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp)
         )
-    } else {
-        Icon(
-            imageVector = if (granted) Icons.Filled.Check else Icons.Filled.Close,
-            contentDescription = if (granted) "Granted" else "Denied",
-            tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(20.dp)
+        true -> Icon(
+            imageVector = Icons.Filled.CheckCircle,
+            contentDescription = "Granted",
+            tint = Color(0xFF4CAF50),
+            modifier = Modifier.size(22.dp)
+        )
+        false -> Icon(
+            imageVector = Icons.Filled.Cancel,
+            contentDescription = "Denied",
+            tint = Color(0xFFF44336),
+            modifier = Modifier.size(22.dp)
         )
     }
 }

@@ -1198,10 +1198,16 @@ class HealthConnectManager(private val context: Context) {
         }
     }
 
-    suspend fun hasPermissions(requiredPermissions: Set<String> = ALL_PERMISSIONS): Boolean {
+    suspend fun hasPermissions(requiredPermissions: Set<String> = READ_PERMISSIONS): Boolean {
         if (!isHealthConnectAvailable()) return false
         val granted = healthConnectClient.permissionController.getGrantedPermissions()
         return requiredPermissions.all { it in granted }
+    }
+
+    suspend fun hasAnyWritePermissions(): Boolean {
+        if (!isHealthConnectAvailable()) return false
+        val granted = healthConnectClient.permissionController.getGrantedPermissions()
+        return CORE_WRITE_PERMISSIONS.any { it in granted }
     }
 
     suspend fun getGrantedPermissions(): Set<String> {
@@ -1283,6 +1289,12 @@ class HealthConnectManager(private val context: Context) {
             HealthPermission.getWritePermission(ExerciseSessionRecord::class),
             HealthPermission.getWritePermission(FloorsClimbedRecord::class),
             HealthPermission.getWritePermission(MenstruationPeriodRecord::class)
+        )
+
+        val CORE_WRITE_PERMISSIONS = setOf(
+            HealthPermission.getWritePermission(NutritionRecord::class),
+            HealthPermission.getWritePermission(HydrationRecord::class),
+            HealthPermission.getWritePermission(WeightRecord::class)
         )
 
         val ALL_PERMISSIONS = READ_PERMISSIONS + WRITE_PERMISSIONS

@@ -60,6 +60,7 @@ fun ConfigurationScreen(
     var selectedDataTypeForPermission by remember { mutableStateOf<HealthDataType?>(null) }
     var isDataTypesExpanded by remember { mutableStateOf(false) }
     var writeBackEnabled by remember { mutableStateOf(preferencesManager.isWriteBackEnabled()) }
+    var hasWritePermissions by remember { mutableStateOf(false) }
 
     // Health Connect Check
     var sdkStatus by remember { mutableIntStateOf(HealthConnectClient.SDK_UNAVAILABLE) }
@@ -98,6 +99,7 @@ fun ConfigurationScreen(
                     try {
                         val healthConnectManager = HealthConnectManager(context)
                         grantedPermissionsSet = healthConnectManager.getGrantedPermissions()
+                        hasWritePermissions = healthConnectManager.hasAnyWritePermissions()
                     } catch (e: Exception) { }
                 }
             } else {
@@ -113,6 +115,7 @@ fun ConfigurationScreen(
                 val grantedPermissions = healthConnectManager.getGrantedPermissions()
                 hasPermissions = grantedPermissions.isNotEmpty()
                 grantedPermissionsSet = grantedPermissions
+                hasWritePermissions = healthConnectManager.hasAnyWritePermissions()
                  // Auto-enable switches for granted permissions if none enabled yet
                 if (enabledDataTypes.isEmpty() && grantedPermissions.isNotEmpty()) {
                     val grantedTypes = HealthDataType.entries.filter { type ->
@@ -514,7 +517,7 @@ fun ConfigurationScreen(
             }
 
             // Write-Back Toggle
-            if (hasPermissions == true) {
+            if (hasPermissions == true && hasWritePermissions) {
                 Card {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(

@@ -90,6 +90,14 @@ class SyncManager(private val context: Context) {
         try {
             val webhookConfigs = preferencesManager.getWebhookConfigs()
             val enabledWebhookConfigs = (targetWebhooks ?: webhookConfigs).filter { it.isEnabled }
+
+            // Best-effort write-back: poll server for pending records and write to Health Connect.
+            try {
+                WriteBackSyncManager(context).pollAndWriteBack(enabledWebhookConfigs)
+            } catch (_: Exception) {
+                // Write-back is best-effort; never fail the read sync over it.
+            }
+
             val localTcpEnabled = preferencesManager.isLocalTcpEnabled()
 
             if (enabledWebhookConfigs.isEmpty() && !localTcpEnabled) {

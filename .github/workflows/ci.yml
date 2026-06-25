@@ -40,7 +40,8 @@ jobs:
       uses: actions/upload-artifact@v6.0.0
       with:
         name: app-debug
-        path: app/build/outputs/apk/debug/*.apk
+        path: app/build/outputs/apk/**/debug/*.apk
+        if-no-files-found: error
       
     - name: Run tests
       run: ./gradlew test
